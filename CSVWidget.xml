@@ -1,0 +1,28 @@
+<?xml version="1.0" ?>
+
+<configuration>	
+	<descriptionlabel>Upload a CSV file by clicking the upload file button below</descriptionlabel>
+	<progressbarlabel>Loading...</progressbarlabel>
+	<progressbarcolor>0xFFFFFF</progressbarcolor>
+	
+	<csvDelimiters defaultvalue="Comma (,)">
+    <csvDelimiter>Comma (,)</csvDelimiter>
+    <csvDelimiter>Pipe (|)</csvDelimiter>
+    <csvDelimiter>Semi-colon (;)</csvDelimiter>
+    </csvDelimiters>
+    
+    <spatialReferences defaultvalue="WGS84">
+    <spatialReference>NZTM</spatialReference>
+    <spatialReference>NZMG</spatialReference>
+    <spatialReference>WGS84</spatialReference>
+    </spatialReferences>
+    
+    <xFieldDefault>X</xFieldDefault>
+    <yFieldDefault>Y</yFieldDefault>    
+    
+	<!-- Symbology for CSV points -->
+	<symbolAlpha>0.7</symbolAlpha>
+	<symbolSize>20</symbolSize>
+	<symbolColor>0x00ffff</symbolColor>
+	<symbolStyle>circle</symbolStyle>    
+</configuration>

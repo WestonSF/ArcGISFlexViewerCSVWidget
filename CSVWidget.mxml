@@ -1,0 +1,356 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+////////////////////////////////////////////////////////////////////////////////
+//
+// Copyright (c) 2010-2011 Esri
+//
+// All rights reserved under the copyright laws of the United States.
+// You may freely redistribute and use this software, with or
+// without modification, provided you include the original copyright
+// and use restrictions.  See use restrictions in the file:
+// <install location>/License.txt
+//
+////////////////////////////////////////////////////////////////////////////////
+-->
+<viewer:BaseWidget xmlns:fx="http://ns.adobe.com/mxml/2009"
+				   xmlns:s="library://ns.adobe.com/flex/spark"
+				   xmlns:mx="library://ns.adobe.com/flex/mx"
+				   xmlns:esri="http://www.esri.com/2008/ags"
+				   xmlns:viewer="com.esri.viewer.*"				   
+				   widgetConfigLoaded="init()">				   
+	
+	<fx:Script>
+		<![CDATA[
+			import com.esri.ags.Graphic;
+			import com.esri.ags.SpatialReference;
+			import com.esri.ags.geometry.Geometry;
+			import com.esri.ags.geometry.MapPoint;
+			import com.esri.ags.layers.GraphicsLayer;
+			import com.esri.ags.symbols.SimpleMarkerSymbol;
+			import com.esri.ags.tasks.GeometryService;
+			import com.esri.ags.events.GeometryServiceEvent;
+			import com.esri.ags.tasks.GeometryServiceSingleton;
+			import com.esri.ags.tasks.supportClasses.ProjectParameters;
+			
+			import mx.collections.ArrayCollection;
+			import mx.collections.ArrayList;
+			import mx.controls.Alert;
+			import mx.utils.StringUtil;
+			import mx.rpc.events.FaultEvent;
+			
+			[Bindable] private var descriptionLabel:String;
+			[Bindable] private var progressbarLabel:String;
+			[Bindable] private var progressbarColor:uint;
+			[Bindable] private var xFieldDefault:String;
+			[Bindable] private var yFieldDefault:String;
+			private var file:FileReference = new FileReference();
+			private var csvGraphicsLayer:GraphicsLayer = new GraphicsLayer();
+			private var symbol:SimpleMarkerSymbol = new SimpleMarkerSymbol();
+			private var geometryService:GeometryService = new GeometryService();
+			
+			private function init():void
+			{		
+				// Check for configuration file
+				if (configXML) 
+				{									
+					descriptionLabel = configXML.descriptionlabel || "";
+					progressbarLabel = configXML.progressbarlabel || "";
+					progressbarColor = uint(configXML.progressbarcolor)  || uint("0xffffff");
+					xFieldDefault = configXML.xFieldDefault || "X";
+					yFieldDefault = configXML.yFieldDefault || "Y";
+					
+					// Setup symbology for points	
+					symbol.alpha = configXML.symbolAlpha;
+					symbol.size = configXML.symbolSize;
+					symbol.color = configXML.symbolColor;
+					symbol.style = configXML.symbolSize; 
+					
+					// If tags in config
+					if (configXML.csvDelimiters[0])
+					{
+						loadcsvDelimiter();						
+					}
+					if (configXML.spatialReferences[0])
+					{
+						loadspatialReference();						
+					}
+				}
+				// Setup geometry service
+				geometryService.url = GeometryServiceSingleton.instance.url;
+				geometryService.concurrency = "last";
+				geometryService.showBusyCursor = true;
+				geometryService.addEventListener(GeometryServiceEvent.PROJECT_COMPLETE,projectCompleteHandler);
+				geometryService.addEventListener(FaultEvent.FAULT,projectFaultHandler);				
+			}
+			
+			// Load CSV delimiters into dropdown
+			private function loadcsvDelimiter():void
+			{
+				// Get the values from config and push into array			
+				var csvDelimiterList:ArrayCollection = new ArrayCollection();
+				var configDefaultcsvDelimiter:String = configXML.csvDelimiters.@defaultvalue[0];
+				var defaultIndex:int = new int();
+				for each (var csvDelimiterXML:XML in configXML.csvDelimiters.csvDelimiter)
+				{						
+					csvDelimiterList.addItem(csvDelimiterXML); 						
+					// If it's the default value from config thwen get the index number
+					if (csvDelimiterXML == configDefaultcsvDelimiter) 
+					{							
+						defaultIndex = csvDelimiterList.length-1;							
+					}
+				}
+				// Assign array collection to drop down list
+				csvDelimiterDropdown.dataProvider = csvDelimiterList;
+														
+				if (configDefaultcsvDelimiter)
+				{	
+					csvDelimiterDropdown.selectedIndex = defaultIndex;
+				}				
+			}
+			
+			// Load spatial references into dropdown
+			private function loadspatialReference():void
+			{
+				// Get the values from config and push into array			
+				var spatialReferenceList:ArrayCollection = new ArrayCollection();
+				var configDefaultspatialReference:String = configXML.spatialReferences.@defaultvalue[0];
+				var defaultIndex:int = new int();
+				for each (var spatialReferenceXML:XML in configXML.spatialReferences.spatialReference)
+				{						
+					spatialReferenceList.addItem(spatialReferenceXML); 						
+					// If it's the default value from config thwen get the index number
+					if (spatialReferenceXML == configDefaultspatialReference) 
+					{							
+						defaultIndex = spatialReferenceList.length-1;							
+					}
+				}
+				// Assign array collection to drop down list
+				coordSystemDropdown.dataProvider = spatialReferenceList;
+				
+				if (configDefaultspatialReference)
+				{	
+					coordSystemDropdown.selectedIndex = defaultIndex;
+				}				
+			}
+			
+			
+			private function uploadFileHandler():void
+			{
+				// Require X and Y field to be specified
+				if ((xFieldInput.text != "") && (xFieldInput.text != " ") && (yFieldInput.text != "") && (yFieldInput.text != " ")) {
+					// Setup event listeners for file upload
+					file.addEventListener( Event.SELECT, fileSelectHandler );
+					file.addEventListener( Event.COMPLETE, fileCompleteHandler );
+					// Browse for file to upload
+					file.browse( [new FileFilter("Comma Separated Values", "*.csv;*.txt")] );					
+				}
+				else {
+					Alert.show("Please enter an X and Y field value");
+				}
+			}
+			
+			// When file is selected
+			private function fileSelectHandler( event:Event ):void
+			{
+				// Starts loading the local file - No bigger than 100MB
+				file.load();
+				// Show progress bar
+				gpProgressBar.visible = true
+			}
+			
+			// When uploading of file is complete
+			private function fileCompleteHandler( event:Event ):void
+			{
+				// Clear previous graphics
+				csvGraphicsLayer.clear();
+					
+				// Remove event listeners
+				file.removeEventListener( Event.COMPLETE, fileCompleteHandler );
+				file.removeEventListener( Event.SELECT, fileSelectHandler );		
+				
+				// Read the data file
+				var coordsData:String =  file.data.readMultiByte( file.data.bytesAvailable, "utf-8");
+				var csvDelimiterSelected:String = csvDelimiterDropdown.selectedItem;
+				var delimiter:String = new String();
+				
+				if (csvDelimiterSelected.indexOf("Comma") >= 0) {
+					delimiter = ","
+				}
+				if (csvDelimiterSelected.indexOf("Pipe") >= 0) {
+					delimiter = "|"
+				}
+				if (csvDelimiterSelected.indexOf("Semi-colon") >= 0) {
+					delimiter = ";"
+				}
+				// Split by end of line to get all records in CSV
+				var coordArray:Array = coordsData.split( "\n" );	
+				// Get the header of the CSV
+				var csvHeader:Array = coordArray[0].split(delimiter);
+				var xFieldNumber:int = new int();
+				var yFieldNumber:int = new int();
+				
+				// Get the field numbers for the xy fields
+				for (var a:int=0; csvHeader.length > a; a++) {
+					if (StringUtil.trim(csvHeader[a]) == StringUtil.trim(xFieldInput.text)) {
+						xFieldNumber = a;
+					}
+					if (StringUtil.trim(csvHeader[a]) == StringUtil.trim(yFieldInput.text)) {						
+						yFieldNumber = a;
+					}	
+				}
+				
+				var spatialReference:SpatialReference = new SpatialReference(2193);	
+				var projectionNeeded:Boolean = false;
+				var mapPoints:Array = [];
+				// For each of the records in the CSV
+				for (var b:int=0; b < coordArray.length; b++) {
+					var xFieldCoord:Number = new Number();
+					var yFieldCoord:Number = new Number();					
+					// Get the X and Y fields
+					var csvRecord:Array = coordArray[b].split(delimiter);					
+					xFieldCoord = csvRecord[xFieldNumber];
+					yFieldCoord = csvRecord[yFieldNumber];
+										
+					// If valid coordinates
+					if ((!isNaN(xFieldCoord)) && (xFieldCoord != 0) && (!isNaN(yFieldCoord)) && (yFieldCoord != 0)) {						
+						// If NZTM
+						if (coordSystemDropdown.selectedItem == "NZTM") {
+							// Set projection
+							projectionNeeded = false;
+							spatialReference = new SpatialReference(2193);
+						}
+						// If NZMG
+						if (coordSystemDropdown.selectedItem == "NZMG") {
+							// Set projection
+							projectionNeeded = true;
+							spatialReference = new SpatialReference(27200);
+						}						
+						// If WGS84
+						if (coordSystemDropdown.selectedItem == "WGS84") {	
+							// Set projection
+							projectionNeeded = true;
+							spatialReference = new SpatialReference(4326);
+						}			
+	
+						// Get map point and push into array
+						var mapPoint:Geometry = new MapPoint( xFieldCoord, yFieldCoord );
+						mapPoint.spatialReference = spatialReference;					
+						mapPoints.push(mapPoint);				
+					}
+				}
+						
+				// If projection is required
+				if (projectionNeeded == true) {
+					// Setup projection parameters				
+					const projectParameters:ProjectParameters = new ProjectParameters;
+					projectParameters.geometries = mapPoints;
+					projectParameters.outSpatialReference = map.spatialReference;
+					// Project the points
+					geometryService.project(projectParameters);						
+				}		
+				// Otherwise iterate through points, convert to graphics and add to map
+				else {
+					for (var d:int=0; d < mapPoints.length; d++) {
+						var graphic:Graphic = new Graphic(mapPoints[d]);
+						graphic.symbol = symbol;
+						csvGraphicsLayer.add(graphic);
+					}
+					map.addLayer(csvGraphicsLayer);
+				}
+				
+				// Hide progress bar
+				gpProgressBar.visible = false
+			}		
+			
+			// Projection completed handler
+			private function projectCompleteHandler(event:GeometryServiceEvent) :void   
+			{ 
+				// Get results from project as array
+				var mapPoints:Array = event.result as Array;
+
+				// Iterate through points, convert to graphics and add to map
+				for (var a:int=0; a < mapPoints.length; a++) {
+					var graphic:Graphic = new Graphic(mapPoints[a]);
+					graphic.symbol = symbol;
+					csvGraphicsLayer.add(graphic);
+				}
+				map.addLayer(csvGraphicsLayer);
+			}
+			
+			// Projection error handler
+			protected function projectFaultHandler(event:FaultEvent):void
+			{
+				Alert.show(event.fault.faultString + "\n\n" + event.fault.faultDetail, "Error projecting coordinates " + event.fault.faultCode);
+			}
+			
+			// Clear button clicked
+			private function clearGraphics():void
+			{
+				csvGraphicsLayer.clear();
+			}
+		]]>
+	</fx:Script>	
+	
+	<fx:Declarations>
+
+	</fx:Declarations>
+
+	<viewer:WidgetTemplate id="wTemplate"
+						   width="340" height="300">
+		<s:HGroup width="100%" height="100%" top="5" left="5">
+			<s:VGroup width="100%">
+				<s:HGroup verticalAlign="middle">
+					<mx:Label id="descriptionText" fontSize="10" fontStyle="italic" text="{descriptionLabel}"/>
+				</s:HGroup> 	
+				
+				<mx:FormHeading label="Properties" paddingTop="5"/>
+				
+				<mx:FormItem id="coordSystemForm"
+							 label="Coordinate System:"
+							 width="100%"
+							 visible="true">
+					<s:DropDownList id="coordSystemDropdown"
+									requireSelection="true"/>
+				</mx:FormItem>	
+				
+				<mx:FormItem id="csvDelimiterForm"
+							 label="CSV Delimiter:"
+							 width="100%"
+							 visible="true">
+					<s:DropDownList id="csvDelimiterDropdown"
+									requireSelection="true"/>
+				</mx:FormItem>	
+
+				<mx:FormItem id="xFieldForm"
+							 label="X Field:"
+							 width="100%"
+							 visible="true">
+					<s:TextInput id="xFieldInput"
+								 text="{xFieldDefault}"
+								 width="60"/>
+				</mx:FormItem>
+				
+				<mx:FormItem id="yFieldForm"
+							 label="Y Field:"
+							 width="100%"
+							 visible="true">
+					<s:TextInput id="yFieldInput"
+								 text="{yFieldDefault}"
+								 width="60"/>
+				</mx:FormItem>
+				
+				<s:HGroup verticalAlign="middle">
+					<mx:Button id="uploadButton" label="Upload File" click="uploadFileHandler()"/>
+					<mx:Button id="clearButton" label="Clear" click="clearGraphics()"/>
+				</s:HGroup> 
+	
+				
+				<s:HGroup verticalAlign="middle">
+					<mx:ProgressBar id="gpProgressBar" labelPlacement="bottom" horizontalCenter="0" verticalCenter="10"
+									indeterminate="true" minimum="0" label="{progressbarLabel}" visible="false" maximum="100"
+									color="{progressbarColor}" direction="right" width="100%"/>	
+				</s:HGroup> 	
+			</s:VGroup>
+		</s:HGroup> 
+	</viewer:WidgetTemplate>
+</viewer:BaseWidget>
